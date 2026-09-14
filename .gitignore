@@ -1,0 +1,8 @@
+/secrets/
+/backups/
+/setup.json
+/.env
+/.test*
+/.operation.lock
+__pycache__/
+*.pyc

@@ -1,0 +1,80 @@
+name: whollycrypto
+
+services:
+  database:
+    image: postgres:18.6-bookworm@sha256:1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af
+    platform: linux/amd64
+    restart: unless-stopped
+    pids_limit: 256
+    entrypoint: ["/bin/bash", "/opt/whollycrypto-db-entrypoint.sh"]
+    command: ["postgres", "-c", "listen_addresses=", "-c", "max_connections=50", "-c", "shared_buffers=128MB"]
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: --auth-local=scram-sha-256 --auth-host=scram-sha-256
+    secrets:
+      - postgres_password
+      - database_password
+    volumes:
+      - database:/var/lib/postgresql
+      - database_socket:/var/run/postgresql
+      - ./runtime/db-entrypoint.sh:/opt/whollycrypto-db-entrypoint.sh:ro
+      - ./runtime/db-init.sh:/docker-entrypoint-initdb.d/10-whollycrypto.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h /var/run/postgresql -U postgres -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    security_opt: ["no-new-privileges:true"]
+    logging: &logging
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  merchant:
+    build: .
+    image: whollycrypto-merchant-runtime:1.0.0
+    platform: linux/amd64
+    init: true
+    pids_limit: 512
+    restart: unless-stopped
+    depends_on:
+      database: {condition: service_healthy}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - merchant:/root/whollycrypto
+      - nginx:/etc/nginx
+      - certificates:/etc/letsencrypt
+      - database_socket:/var/run/postgresql
+      - ./setup.json:/run/whollycrypto-setup.json:ro
+    secrets:
+      - database_password
+      - basic_password
+    tmpfs:
+      - /tmp:mode=1777,size=268435456
+      - /run/whollycrypto-container:mode=0700,size=16777216
+      - /var/lib/postgresql:mode=0700,size=1048576
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["NET_RAW", "MKNOD", "AUDIT_WRITE", "SETFCAP"]
+    stop_grace_period: 2m
+    ulimits:
+      nofile: {soft: 65536, hard: 65536}
+    healthcheck:
+      test: ["CMD", "python3", "/opt/whollycrypto-docker/health.py"]
+      interval: 20s
+      timeout: 5s
+      start_period: 15m
+      retries: 3
+    logging: *logging
+
+volumes:
+  merchant:
+  database:
+  database_socket:
+  nginx:
+  certificates:
+
+secrets:
+  postgres_password: {file: ./secrets/postgres_password}
+  database_password: {file: ./secrets/database_password}
+  basic_password: {file: ./secrets/basic_password}

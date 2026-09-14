@@ -1,0 +1,7 @@
+**
+!Dockerfile
+!runtime/
+!runtime/**
+!release-signing.pub
+**/__pycache__/**
+**/*.pyc
