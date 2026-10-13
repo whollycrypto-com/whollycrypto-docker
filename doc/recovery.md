@@ -2,7 +2,7 @@
 
 Use only your own trusted, complete backup. This procedure replaces no existing data: use a **fresh VPS and new, empty volumes**. Keep the old installation stopped throughout recovery so only one copy can operate on your wallets.
 
-1. Install Docker Engine, Compose, Python 3.9+ and Git on Linux amd64. Clone this repository into `/root/whollycrypto-docker`. **Do not run setup** and do not generate new secrets.
+1. Clone this repository into `/root/whollycrypto-docker` on Linux amd64. Install Git first if needed. Run `./whollycrypto-docker prerequisites` to install missing host tools with confirmation (Docker Engine, Compose, Buildx and Python 3.9+). **Do not run setup** and do not generate new secrets.
 2. Copy the complete backup directory to a root-only location. Confirm `backup.json` says `complete: true` and PostgreSQL major `18`. From that directory run `sha256sum -c data.tar.gz.sha256`.
 3. Copy its `setup.json` and entire `secrets/` into the cloned directory, preserving root ownership. Use `0700` for `secrets/` and `0600` for its files and `setup.json`.
 4. Build the runtime image with `docker compose build --pull`. Run `docker compose create` to create containers and volumes **without starting them**. Inspect `docker compose ps --all` and the containers' mounts to identify this project's `merchant`, `database`, `nginx` and `certificates` volumes.
@@ -15,7 +15,7 @@ docker run --rm --network none --entrypoint tar \
   --mount type=volume,src=whollycrypto_nginx,dst=/snapshot/nginx \
   --mount type=volume,src=whollycrypto_certificates,dst=/snapshot/certificates \
   --mount type=bind,src=/absolute/path/to/backup/data.tar.gz,dst=/recovery.tar.gz,readonly \
-  whollycrypto-merchant-runtime:1.0.0 \
+  whollycrypto-merchant-runtime:1.1.0 \
   -C /snapshot -xzf /recovery.tar.gz
 ```
 

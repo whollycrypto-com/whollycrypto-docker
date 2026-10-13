@@ -177,7 +177,11 @@ class Supervisor:
     async def request(self, data):
         action = data.get('action')
         if action == 'ping':
-            return {'protocol': 1, 'ready': self.ready and self.state(APP)[0] == self.state(NGINX)[0] == 'active'}
+            return {'protocol': 1, 'ready': self.ready and self.state(APP)[0] == self.state(NGINX)[0] == 'active',
+                    'bootstrap_state': self.state('bootstrap.service')[0],
+                    'recovery_required': (ROOT / 'update-pending.json').exists(),
+                    'busy': any(self.state(unit)[0] in ('active', 'activating', 'deactivating')
+                                for unit in COMMANDS if unit not in (APP, NGINX, 'bootstrap.service'))}
         if action == 'ready':
             self.ready = True
             return {}

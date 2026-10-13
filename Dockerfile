@@ -1,7 +1,7 @@
 FROM postgres:18.6-bookworm@sha256:1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af
 LABEL org.opencontainers.image.title="Wholly Crypto merchant container runtime" \
       org.opencontainers.image.source="https://github.com/whollycrypto-com/whollycrypto-docker" \
-      org.opencontainers.image.version="1.0.0"
+      org.opencontainers.image.version="1.1.0"
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d \
     && apt-get update \

@@ -4,5 +4,7 @@
 /.env
 /.test*
 /.operation.lock
+/.setup-pending.json
+/.setup-write-*
 __pycache__/
 *.pyc

@@ -8,7 +8,9 @@ The [native Linux installer](https://www.whollycrypto.com/documentation/#install
 
 ## Install
 
-Requirements: Linux **amd64 / x86-64**, root access, Python **3.9+**, Git, [Docker Engine and Docker Compose](https://docs.docker.com/engine/install/). Use a current, maintained Docker Engine with Compose v2.24+ (Compose v5 also works). ARM64 images are not available yet.
+Start with a fresh **Linux amd64 / x86-64** VPS, root access, Bash and curl. The **1.1.0 bootstrap offers to install missing Python 3.9+, Git, Docker Engine, Docker Compose and Buildx**. It asks before package changes. It never removes an existing container runtime, deletes volumes or stops another web server. ARM64 images are not available yet.
+
+Automatic prerequisite installation supports Ubuntu 22.04/24.04/26.04, Debian 12/13, Fedora 43/44/45 and RHEL 9/10 with systemd. Other maintained Linux distributions can use an existing rootful Docker Engine with Compose v2+ and Buildx after you install the prerequisites yourself. Conflicting runtimes/repositories stop with instructions for manual review. See [Docker's distribution guides](https://docs.docker.com/engine/install/).
 
 For light use, start with 2 vCPU, 4 GB RAM and 30 GB SSD. Allow room for the OS, images, invoice history and backups; have at least 3 GiB free before setup. More payment activity and enabled chains may require more capacity.
 
@@ -17,16 +19,28 @@ For light use, start with 2 vCPU, 4 GB RAM and 30 GB SSD. Allow room for the OS,
 3. Run as root:
 
 ```bash
-git clone https://github.com/whollycrypto-com/whollycrypto-docker.git /root/whollycrypto-docker
-cd /root/whollycrypto-docker
+bash <(curl -fsSL https://raw.githubusercontent.com/whollycrypto-com/whollycrypto-docker/v1.1.0/install.sh)
+```
+
+The command needs Bash and curl to fetch the bootstrap. If curl is missing, install it with your distribution's package manager first. The integration is pinned to v1.1.0; a **new application volume downloads the latest signed stable merchant release**, with signature/checksum verification before execution. An existing application volume keeps its installed version.
+
+Prefer to inspect the code first, and already have Git?
+
+```bash
+git clone --branch v1.1.0 --depth 1 https://github.com/whollycrypto-com/whollycrypto-docker.git /root/whollycrypto-docker &&
+cd /root/whollycrypto-docker &&
 ./whollycrypto-docker setup
 ```
 
+`./whollycrypto-docker check` is a read-only prerequisite check. `./whollycrypto-docker prerequisites` installs only missing host tools, not the application. `--yes` approves prerequisite installation; it does **not** answer the domain/password wizard or accept software agreements. Existing Docker engines are not upgraded automatically. A stopped engine is started only with your confirmation.
+
 Choose your domains, public VPS IP, renewal email, default fiat currency and HTTP Basic login. The helper builds the runtime image, starts PostgreSQL, verifies the signed merchant download, issues Let's Encrypt certificates and starts the merchant. **No Rust compiler, blockchain node or merchant source checkout is needed.** The first image build and database initialization can take several minutes.
 
-The log prints `Ready: https://...` when setup finishes. Ctrl+C closes the log view, not the running containers. Open the merchant URL, enter the Basic Auth login, then register your separate administrator email/password. Normal automatic registration and welcome-credit rules apply.
+Setup reports progress and exits successfully only after verified application readiness. Ctrl+C closes the view, not the running containers. Open the displayed merchant URL, enter the Basic Auth login, then register your separate administrator email/password. Normal automatic registration and welcome-credit rules apply.
 
 Private setup files are `setup.json` and `secrets/`. Keep them root-owned, mode `0600`, with `secrets/` mode `0700`. A generated Basic Auth password is shown only by the interactive setup helper and retained in `secrets/basic_password`. Never commit, upload or share these files.
+
+If setup stops, fix the reported cause, then run `/root/whollycrypto-docker/whollycrypto-docker resume`. A private `.setup-pending.json` journal recovers interrupted configuration without generating new secrets. Never delete it to start over. An already-ready installation is not rebuilt/restarted by `resume`; active setup is followed, and interrupted updates require `cli recover` first.
 
 ## Day-to-day commands
 
@@ -34,6 +48,8 @@ Run these from `/root/whollycrypto-docker`:
 
 | Command | Purpose |
 | --- | --- |
+| `./whollycrypto-docker check` | Read-only host prerequisite check |
+| `./whollycrypto-docker prerequisites` | Offer to install missing host tools only |
 | `./whollycrypto-docker status` | Container and health status |
 | `./whollycrypto-docker logs` | Follow setup and worker lifecycle logs |
 | `./whollycrypto-docker cli logs` | Recent private merchant application log |
@@ -61,13 +77,16 @@ The Docker integration/runtime image and merchant application have separate vers
 After a full backup, and when no update/domain job is running:
 
 ```bash
-git pull --ff-only
+git diff --quiet && git diff --cached --quiet &&
+git fetch origin tag v1.1.0 && git switch --detach v1.1.0
 docker compose build --pull
 ./whollycrypto-docker start
 ./whollycrypto-docker doctor
 ```
 
-Keep the same Compose project/directory. Changing the project name creates different volumes. PostgreSQL is pinned to a tested **18.6** image/digest; future major database upgrades require an explicit migration, not a tag swap.
+Replace the tag only with a newer published integration release you have reviewed. Keep any local changes; do not use reset/clean to force an upgrade. Older v1.0.0 checkouts can use these steps too. Run `./whollycrypto-docker prerequisites` after switching if Compose/Buildx needs to be installed. If a package transaction would replace or upgrade your existing Docker engine, setup stops for manual review.
+
+Keep the same Compose project/directory. The helper fixes the project name to `whollycrypto` and refuses remote Docker or conflicting Compose environment overrides; changing the project name creates different volumes. PostgreSQL is pinned to a tested **18.6** image/digest; future major database upgrades require an explicit migration, not a tag swap.
 
 ## What runs where
 

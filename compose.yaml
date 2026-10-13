@@ -31,7 +31,7 @@ services:
 
   merchant:
     build: .
-    image: whollycrypto-merchant-runtime:1.0.0
+    image: whollycrypto-merchant-runtime:1.1.0
     platform: linux/amd64
     init: true
     pids_limit: 512
