@@ -1,5 +1,6 @@
 **
 !Dockerfile
+!Dockerfile.database
 !runtime/
 !runtime/**
 !release-signing.pub

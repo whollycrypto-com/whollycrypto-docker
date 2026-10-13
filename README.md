@@ -8,7 +8,7 @@ The [native Linux installer](https://www.whollycrypto.com/documentation/#install
 
 ## Install
 
-Start with a fresh **Linux amd64 / x86-64** VPS, root access, Bash and curl. The **1.1.0 bootstrap offers to install missing Python 3.9+, Git, Docker Engine, Docker Compose and Buildx**. It asks before package changes. It never removes an existing container runtime, deletes volumes or stops another web server. ARM64 images are not available yet.
+Start with a fresh **Linux amd64 / x86-64** VPS, root access, Bash and curl. The **1.1.1 bootstrap offers to install missing Python 3.9+, Git, Docker Engine, Docker Compose and Buildx**. It asks before package changes. It never removes an existing container runtime, deletes volumes or stops another web server. ARM64 images are not available yet.
 
 Automatic prerequisite installation supports Ubuntu 22.04/24.04/26.04, Debian 12/13, Fedora 43/44/45 and RHEL 9/10 with systemd. Other maintained Linux distributions can use an existing rootful Docker Engine with Compose v2+ and Buildx after you install the prerequisites yourself. Conflicting runtimes/repositories stop with instructions for manual review. See [Docker's distribution guides](https://docs.docker.com/engine/install/).
 
@@ -19,15 +19,15 @@ For light use, start with 2 vCPU, 4 GB RAM and 30 GB SSD. Allow room for the OS,
 3. Run as root:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/whollycrypto-com/whollycrypto-docker/v1.1.0/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/whollycrypto-com/whollycrypto-docker/v1.1.1/install.sh)
 ```
 
-The command needs Bash and curl to fetch the bootstrap. If curl is missing, install it with your distribution's package manager first. The integration is pinned to v1.1.0; a **new application volume downloads the latest signed stable merchant release**, with signature/checksum verification before execution. An existing application volume keeps its installed version.
+The command needs Bash and curl to fetch the bootstrap. If curl is missing, install it with your distribution's package manager first. The integration is pinned to v1.1.1; a **new application volume downloads the latest signed stable merchant release**, with signature/checksum verification before execution. An existing application volume keeps its installed version.
 
 Prefer to inspect the code first, and already have Git?
 
 ```bash
-git clone --branch v1.1.0 --depth 1 https://github.com/whollycrypto-com/whollycrypto-docker.git /root/whollycrypto-docker &&
+git clone --branch v1.1.1 --depth 1 https://github.com/whollycrypto-com/whollycrypto-docker.git /root/whollycrypto-docker &&
 cd /root/whollycrypto-docker &&
 ./whollycrypto-docker setup
 ```
@@ -57,6 +57,7 @@ Run these from `/root/whollycrypto-docker`:
 | `./whollycrypto-docker doctor --fix` | The merchant's bounded repairs |
 | `./whollycrypto-docker resume` | Retry unfinished setup without regenerating keys |
 | `./whollycrypto-docker update` | Signed merchant update, including normal credit checks |
+| `./whollycrypto-docker runtime-update` | Upgrade container code after building and safely draining workers |
 | `./whollycrypto-docker backup` | Verified full cold backup; briefly pauses checkout |
 | `./whollycrypto-docker cli backup` | Merchant recovery bundle without a full container snapshot |
 | `./whollycrypto-docker cli htaccess` | Change the console HTTP Basic login |
@@ -64,7 +65,7 @@ Run these from `/root/whollycrypto-docker`:
 | `./whollycrypto-docker cli 2fa-reset` | Reset an account's 2FA through the recovery flow |
 | `./whollycrypto-docker cli ssl` | Inspect/repair the merchant's managed HTTPS certificates |
 | `./whollycrypto-docker cli transfers status` | Check the server's transfer safety setting |
-| `./whollycrypto-docker stop` / `start` | Stop/start without deleting data |
+| `./whollycrypto-docker stop` / `start` | Drain/stop or start the existing containers; never implicitly upgrade |
 
 Add `--help` to an underlying merchant command for its options, for example `./whollycrypto-docker cli ssl --help`.
 
@@ -74,17 +75,20 @@ Add `--help` to an underlying merchant command for its options, for example `./w
 
 The Docker integration/runtime image and merchant application have separate versions. Rebuilding the image updates container dependencies and integration code; it **does not** install a newer merchant binary into an existing volume or bypass application update eligibility.
 
-After a full backup, and when no update/domain job is running:
+After a full backup, switch to the published integration tag and use the guarded runtime updater:
 
 ```bash
 git diff --quiet && git diff --cached --quiet &&
-git fetch origin tag v1.1.0 && git switch --detach v1.1.0
-docker compose build --pull
-./whollycrypto-docker start
+git fetch origin tag v1.1.1 && git switch --detach v1.1.1
+./whollycrypto-docker runtime-update
 ./whollycrypto-docker doctor
 ```
 
-Replace the tag only with a newer published integration release you have reviewed. Keep any local changes; do not use reset/clean to force an upgrade. Older v1.0.0 checkouts can use these steps too. Run `./whollycrypto-docker prerequisites` after switching if Compose/Buildx needs to be installed. If a package transaction would replace or upgrade your existing Docker engine, setup stops for manual review.
+Replace the tag only with a newer published integration release you have reviewed. Keep any local changes; do not use reset/clean to force an upgrade. Older v1.0.0/v1.1.0 checkouts can use these steps too. Run `./whollycrypto-docker prerequisites` after switching if Compose/Buildx needs to be installed. If a package transaction would replace or upgrade your existing Docker engine, setup stops for manual review.
+
+The runtime build happens while the existing application stays online. Immediately before replacement, the helper takes the merchant update lock, pauses timers and waits for active workers. An active merchant update or unfinished setup prevents replacement. Success requires verified application readiness. `start` only starts the original containers; it does not apply a newly built image.
+
+If replacement or readiness fails, keep all volumes and `.runtime-update.json` (it records the previous image IDs). Review `logs`/`status`, fix the cause and retry `runtime-update`. A merchant `update-pending.json` requires `cli recover` first. No database rollback or forced downgrade is automatic.
 
 Keep the same Compose project/directory. The helper fixes the project name to `whollycrypto` and refuses remote Docker or conflicting Compose environment overrides; changing the project name creates different volumes. PostgreSQL is pinned to a tested **18.6** image/digest; future major database upgrades require an explicit migration, not a tag swap.
 
@@ -118,7 +122,7 @@ This drains workers, stops both containers for a consistent snapshot, verifies t
 
 The merchant's scheduled recovery bundles contain database dumps and wallet/configuration data, but are not a substitute for the full Docker backup: the full snapshot also includes TLS and the host-side setup secrets. Follow a connected Lightning wallet's own channel/seed backup procedure separately.
 
-**Never run `docker compose down -v`, delete the data volumes or regenerate secrets to fix an error.** Deleting wallet keys or the database can permanently lose funds or payment history. `docker compose stop` preserves data.
+**Never run `docker compose down -v`, delete the data volumes or regenerate secrets to fix an error.** Deleting wallet keys or the database can permanently lose funds or payment history. Use `./whollycrypto-docker stop` to drain work before stopping. Direct Docker stop/recreate commands bypass that safety guard.
 
 ### Recovery
 
@@ -128,7 +132,7 @@ See [the recovery procedure](doc/recovery.md) for restoring the four durable vol
 
 ## Troubleshooting and limits
 
-- **Setup failed:** inspect `logs`, fix DNS/firewall/disk issues, then `resume`. Existing keys are preserved. Failed bootstrap leaves checkout unavailable until setup completes.
+- **Setup failed:** inspect `logs`, fix DNS/firewall/disk issues, then `resume`. Existing keys are preserved. Failed bootstrap leaves checkout unavailable until setup completes. New PostgreSQL setups checkpoint application-role/database creation and verify authenticated access before becoming healthy. Interrupted cluster creation before PostgreSQL has a valid cluster, or incomplete legacy databases without a checkpoint, stop for explicit inspection; no database is reset.
 - **DNS:** enter the host's public IP, not the Docker subnet. Remove stale AAAA records if you do not serve IPv6. DNS caching and propagation still apply; setup never skips validation.
 - **Port conflict:** use another VPS or plan a migration. This stack manages its own Nginx and certificates. An external reverse proxy, rootless Docker and Docker Desktop are not supported configurations for this initial release.
 - **Host security:** Docker-published ports can bypass some UFW rules. Use provider firewall rules and Docker-aware filtering; see [Docker firewall guidance](https://docs.docker.com/engine/network/packet-filtering-firewalls/). Keep Basic Auth enabled and configure domain/API IP restrictions in Wholly Crypto where appropriate. Leave public checkout accessible to customers.

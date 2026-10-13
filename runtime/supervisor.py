@@ -58,6 +58,7 @@ class Supervisor:
             except (Error, OSError, ValueError, AttributeError):
                 print('[schedule] Could not read timer history; normal startup delays apply.', flush=True)
         self.ready = False
+        self.maintenance = None
         self.stopping = False
         self.locks = {unit: asyncio.Lock() for unit in COMMANDS}
         self.shutdown = asyncio.Event()
@@ -132,6 +133,11 @@ class Supervisor:
                 await self.stop(APP)
 
     async def start(self, unit, command=None, wait=True):
+        if self.stopping and unit in TIMER_DELAYS:
+            # Finishing updaters may restore timers; acknowledge without new work.
+            return
+        if (self.stopping or self.maintenance is not None) and unit not in (APP, NGINX):
+            raise Error('Container maintenance is active. No new background job was started.')
         if unit in TIMER_DELAYS:
             self.timers.add(unit)
             delay = TIMER_DELAYS[unit][0]
@@ -178,12 +184,26 @@ class Supervisor:
         action = data.get('action')
         if action == 'ping':
             return {'protocol': 1, 'ready': self.ready and self.state(APP)[0] == self.state(NGINX)[0] == 'active',
+                    'capabilities': ['maintenance'], 'maintenance': self.maintenance is not None,
                     'bootstrap_state': self.state('bootstrap.service')[0],
                     'recovery_required': (ROOT / 'update-pending.json').exists(),
                     'busy': any(self.state(unit)[0] in ('active', 'activating', 'deactivating')
                                 for unit in COMMANDS if unit not in (APP, NGINX, 'bootstrap.service'))}
         if action == 'ready':
             self.ready = True
+            return {}
+        if action == 'maintenance-begin':
+            if self.stopping or self.maintenance is not None:
+                raise Error('Container maintenance is already active.')
+            self.maintenance = set(self.timers)
+            self.timers.clear()
+            return {'timers': sorted(self.maintenance)}
+        if action == 'maintenance-end':
+            if self.maintenance is not None:
+                previous, self.maintenance = self.maintenance, None
+                if not self.stopping:
+                    for timer in previous:
+                        await self.start(timer)
             return {}
         if action == 'console-update':
             job = str(uuid.UUID(data.get('job', '')))
@@ -294,8 +314,9 @@ class Supervisor:
         self.ready = False
         self.timers.clear()
         scheduler.cancel()
-        server.close()
         # Complete running workers first. Docker's stop_grace_period bounds this.
+        # Keep control requests available: workers need reload/start/stop during
+        # normal completion and rollback. Only NEW work is rejected above.
         jobs = [task for unit, task in self.tasks.items() if unit not in (APP, NGINX) and not task.done()]
         if jobs:
             try:
@@ -310,6 +331,8 @@ class Supervisor:
         for process in self.processes.values():
             if process.returncode is None:
                 os.killpg(process.pid, signal.SIGTERM)
+        server.close()
+        await server.wait_closed()
 
 
 if __name__ == '__main__':

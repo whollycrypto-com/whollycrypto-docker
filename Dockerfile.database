@@ -1,0 +1,8 @@
+FROM postgres:18.6-bookworm@sha256:1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af
+LABEL org.opencontainers.image.title="Wholly Crypto PostgreSQL runtime" \
+      org.opencontainers.image.version="1.1.1"
+# Immutable scripts: switching the host checkout cannot change a running or
+# stopped database container's entrypoint during backup/upgrade preparation.
+COPY runtime/db-entrypoint.sh /opt/whollycrypto-db-entrypoint.sh
+COPY runtime/db-provision.sh /opt/whollycrypto-db-provision.sh
+COPY runtime/db-health.sh /opt/whollycrypto-db-health.sh

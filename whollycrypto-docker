@@ -12,12 +12,13 @@ case "${1:---help}" in
       prerequisites) exec bash "$entry_root/install.sh" --prerequisites-only "$@" ;;
     esac ;;
   --help|-h)
-    printf '%s\n' 'Wholly Crypto Docker 1.1.0' \
+    printf '%s\n' 'Wholly Crypto Docker 1.1.1' \
       '  setup         Guided fresh setup; offers to install missing prerequisites' \
       '  check         Read-only host prerequisite check' \
       '  prerequisites Install missing host tools only (asks before changes)' \
       '  resume        Safely continue an interrupted setup' \
       '  status | logs | doctor | backup | update | start | stop' \
+      '  runtime-update Upgrade container code after draining background work' \
       '  cli COMMAND   Run a merchant CLI command inside the container' \
       '  Setup options: --yes (approve prerequisite installation only)' ;;
   *)

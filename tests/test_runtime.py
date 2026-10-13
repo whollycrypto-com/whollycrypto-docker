@@ -170,8 +170,9 @@ class DistributionTests(unittest.TestCase):
     def test_no_native_host_probe_or_payment_bypass(self):
         source = (REPO / 'runtime/cli.py').read_text()
         self.assertIn('module.check_platform = container_platform', source)
-        for name in ['require_update_credit', 'verify_manifest', 'operation_lock', 'create_backup', 'update']:
+        for name in ['require_update_credit', 'verify_manifest', 'operation_lock', 'create_backup']:
             self.assertNotIn('module.' + name + ' =', source)
+        self.assertIn('return original_update(args)', source)
 
     def test_no_privileged_or_host_socket(self):
         text = (REPO / 'compose.yaml').read_text()

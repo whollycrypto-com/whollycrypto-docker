@@ -4,6 +4,26 @@ These versions identify the Docker integration, not the merchant application.
 Fresh volumes download the latest signed stable merchant release; existing
 volumes keep their installed version until a normal signed application update.
 
+## 1.1.1
+
+- Explicit `runtime-update` builds first, locks out merchant updates, drains
+  background jobs and verifies readiness after replacing containers. Normal
+  `start` retains existing container identities and images.
+- Shutdown keeps the service-control socket available while workers finish.
+- Signature-verified recovery CLI cached outside application replacements;
+  interrupted updates can recover even when the installed CLI file is missing.
+- Failed backup preparation never replaces/restarts containers. Completed or
+  partially stopped backups restart only the original containers they stopped.
+- Checkpointed PostgreSQL application-role/database provisioning resumes safely
+  after interruption. Readiness authenticates the application database. Existing
+  databases and passwords are validated, never reset to make a check pass.
+- Database startup scripts now live in the versioned image, not mutable host
+  binds. PostgreSQL remains pinned to 18.6; merchant remains a separate release.
+
+Verification includes offline failure tests, real isolated 1.1.0→1.1.1 runtime
+upgrade, database process-kill recovery, missing-CLI recovery and cold
+backup/restore. No production funds or installations were used.
+
 ## 1.1.0
 
 - Guided Bash bootstrap can install missing Git, Python, Docker Engine, Compose

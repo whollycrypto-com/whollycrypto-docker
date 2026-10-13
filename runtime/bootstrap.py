@@ -14,6 +14,7 @@ import time
 
 from common import Error, HERE, ROOT, control, merchant, private, write
 from releases import installer
+import recovery
 
 MARKER = ROOT / 'config/install-state.json'
 CONTAINER_MARKER = ROOT / 'config/container-install.json'
@@ -98,6 +99,7 @@ def main():
                 write(ROOT / source.relative_to(package), source.read_bytes(), stat.S_IMODE(source.stat().st_mode))
             write(ROOT / 'config/release-signing.pub', (HERE / 'release-signing.pub').read_bytes())
             write(ROOT / 'config/release-sequence.json', json.dumps({'sequence': manifest['sequence'], 'version': manifest['version']}))
+            recovery.cache(envelope, path.read_bytes())
             state = {'format': 1, 'complete': False, 'package_installed': True, 'version': manifest['version']}
             write(CONTAINER_MARKER, json.dumps(state))
     module = merchant()

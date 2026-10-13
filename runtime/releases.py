@@ -33,6 +33,8 @@ def fetch(path, maximum):
         mirror = GITHUB + 'latest/download/manifest.json'
     elif re.fullmatch(r'/merchant/\d+\.\d+\.\d+/installer\.py', path):
         mirror = GITHUB + 'download/v' + path.split('/')[2] + '/installer.py'
+    elif re.fullmatch(r'/merchant/\d+\.\d+\.\d+/manifest\.json', path):
+        mirror = GITHUB + 'download/v' + path.split('/')[2] + '/manifest.json'
     else:
         raise Error('Unrecognized bootstrap download path.')
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), Redirect())

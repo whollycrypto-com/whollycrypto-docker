@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
-BOOTSTRAP_VERSION=1.1.0
+BOOTSTRAP_VERSION=1.1.1
 REPOSITORY=https://github.com/whollycrypto-com/whollycrypto-docker.git
 INSTALL_ROOT=/root/whollycrypto-docker
 CHECK=false; APPROVE=false; ONLY_DEPS=false; RESUME=false

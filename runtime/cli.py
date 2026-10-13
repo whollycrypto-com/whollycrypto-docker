@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 """Run the signed merchant CLI with an explicit container platform adapter.
 
-Only the host/platform probe and its doctor label are adapted. Signature checks,
-credit checks, backup, migration, rollback and update locks remain unmodified.
+Platform adaptation plus a verified, independent recovery entry point. Native
+signature, credit, backup, migration, rollback and update locks remain enforced.
 """
 import os
 import platform
@@ -12,6 +12,8 @@ from pathlib import Path
 # This launcher can be reached through /usr/local/sbin/whollycrypto.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import Error, control, merchant
+from common import ROOT
+import recovery
 
 
 def container_platform():
@@ -25,8 +27,17 @@ def container_platform():
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == 'install':
         raise Error('Use ./whollycrypto-docker setup on the Docker host, not the native VPS installer.')
-    module = merchant()
+    module = recovery.load() if len(sys.argv) > 1 and sys.argv[1] == 'recover' and (ROOT / 'update-pending.json').exists() else merchant()
     module.check_platform = container_platform
+    original_update = module.update
+    def update(args):
+        # Native main/software_worker already holds its operation lock here.
+        # An update may replace its own CLI; retain the signed OLD entry point
+        # first, so an interruption cannot remove the recovery command too.
+        if not getattr(args, 'check', False):
+            recovery.prepare_current()
+        return original_update(args)
+    module.update = update
     original_say = module.say
     def say(message):
         if 'Platform:' in str(message) or ('Platform' in str(message) and '/ systemd' in str(message)):

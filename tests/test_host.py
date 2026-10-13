@@ -144,7 +144,7 @@ class ShellTests(unittest.TestCase):
         self.assertIn('Usage:', self.shell('main --help'))
         result = subprocess.run(['bash', str(REPO / 'whollycrypto-docker'), '--help'], text=True, capture_output=True)
         self.assertEqual(result.returncode, 0)
-        self.assertIn('1.1.0', result.stdout)
+        self.assertIn('1.1.1', result.stdout)
     def test_unknown_flags_fail(self):
         self.assertIn('Unknown option', self.shell('main --erase', False))
     def test_check_is_non_mutating(self):

@@ -13,6 +13,7 @@ from pathlib import Path
 import platform
 import re
 import secrets
+import selectors
 import shutil
 import socket
 import stat
@@ -23,6 +24,7 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+INTEGRATION = ROOT
 DOCKER = ['docker', 'compose', '--project-name', 'whollycrypto', '--project-directory', str(ROOT), '-f', str(ROOT / 'compose.yaml')]
 TIMERS = ['whollycrypto-' + name + '.timer' for name in ('domain-apply', 'icon-sync', 'backup', 'software-worker', 'certbot')]
 SECRET_NAMES = ('database_password', 'postgres_password', 'basic_password')
@@ -233,7 +235,7 @@ def label_container_inputs():
                      *(ROOT / 'secrets' / name for name in ('database_password', 'postgres_password', 'basic_password'))]
             if any(path.is_symlink() or not path.is_file() for path in files):
                 raise Error('An expected container input is missing or is a symbolic link.')
-            print('Keep SELinux enabled: label the six container input files for shared read-only access.')
+            print('Keep SELinux enabled: label setup inputs (including the two legacy database mounts).')
             run(['chcon', '-t', 'container_file_t', '-l', 's0', *files])
 
 
@@ -280,6 +282,125 @@ def check_capacity():
         directories.append(Path(docker_root))
     if any(shutil.disk_usage(path).free < 3 * 1024**3 for path in directories):
         raise Error('At least 3 GiB free space is required on both the integration and Docker data filesystems.')
+
+
+def containers():
+    identities = compose('ps', '--all', '--quiet', capture=True).split()
+    if not identities:
+        return {}
+    values = json.loads(run(['docker', 'inspect', *identities], capture=True))
+    result = {}
+    for value in values:
+        service = value.get('Config', {}).get('Labels', {}).get('com.docker.compose.service')
+        if service not in ('merchant', 'database') or service in result:
+            raise Error('Unexpected or duplicate containers in this project. No containers were changed.')
+        result[service] = value
+    return result
+
+
+@contextlib.contextmanager
+def maintenance(container):
+    """Coordinate with CLI/console updates, including on older integrations."""
+    if not container or not container.get('State', {}).get('Running'):
+        yield
+        return
+    source = (INTEGRATION / 'runtime/maintenance.py').read_text()
+    process = subprocess.Popen(['docker', 'exec', '-i', container['Id'], 'python3', '-u', '-c', source],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            if not selector.select(200):
+                raise Error('Maintenance did not confirm idle workers. No containers were stopped.')
+            raw = process.stdout.readline(8193)
+        if not raw or len(raw) > 8192:
+            raise Error('Could not acquire the container maintenance guard. Inspect logs before retrying.')
+        message = json.loads(raw)
+        if message.get('ok') is not True or message.get('state') != 'drained':
+            raise Error(message.get('error', 'Background work could not be drained. No containers were stopped.'))
+        yield
+    finally:
+        failed = sys.exc_info()[0] is not None
+        process.stdin.close()
+        try:
+            result = process.wait(timeout=30)
+            if result and not failed:
+                # Stopping/replacing this exact container ends its guard too.
+                # If it is still running, however, timer restoration failed:
+                # do not silently report successful maintenance.
+                state = subprocess.run(['docker', 'inspect', container['Id']],
+                                       text=True, capture_output=True, timeout=10)
+                if not state.returncode and json.loads(state.stdout)[0]['State']['Running']:
+                    raise Error('Maintenance release failed. Inspect container status and timers before continuing.')
+        except subprocess.TimeoutExpired:
+            # Do not terminate a container or worker on a host-side timeout.
+            raise Error('Maintenance guard is still releasing. Inspect status before another operation.') from None
+        finally:
+            process.stdout.close()
+
+
+def start_existing(values):
+    """Start EXACT stopped container identities; never implicitly upgrade."""
+    for service in ('database', 'merchant'):
+        value = values.get(service)
+        if value and not value['State']['Running']:
+            run(['docker', 'start', value['Id']])
+        if value and service == 'database':
+            wait_database(value['Id'])
+
+
+def wait_database(identity, timeout=180):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = json.loads(run(['docker', 'inspect', identity], capture=True))[0]['State']
+        if state.get('Health', {}).get('Status') == 'healthy':
+            return
+        if not state.get('Running'):
+            break
+        time.sleep(1)
+    raise Error('The database is not ready. Inspect database logs; data and secrets were retained.')
+
+
+def stop_existing(values):
+    stopped = {}
+    try:
+        for service in ('merchant', 'database'):
+            value = values.get(service)
+            if value and value['State']['Running']:
+                run(['docker', 'stop', '--timeout', '120', value['Id']])
+                stopped[service] = {**value, 'State': {**value['State'], 'Running': False}}
+    except BaseException:
+        start_existing(stopped)
+        raise
+    return stopped
+
+
+def runtime_update():
+    validate_inputs()
+    label_container_inputs()
+    check_capacity()
+    values = containers()
+    if set(values) != {'merchant', 'database'}:
+        raise Error('Runtime upgrades require both existing containers. Use setup or the documented restore procedure.')
+    print('Build the runtime first. The installed merchant stays online.', flush=True)
+    compose('build', '--pull')
+    # Re-inspect AFTER the build. The guard holds the native operation lock
+    # until the old container is stopped; there is no check/build/recreate race.
+    values = containers()
+    if set(values) != {'merchant', 'database'}:
+        raise Error('The container set changed during the build. Inspect status before retrying; no containers were stopped.')
+    journal = ROOT / '.runtime-update.json'
+    with maintenance(values.get('merchant')):
+        if not journal.exists():
+            save(journal, json.dumps({'format': 1, 'previous_images': {name: value['Image'] for name, value in values.items()}}))
+        print('Background jobs drained. Replacing the Docker runtime; persistent data is retained.', flush=True)
+        stop_existing(values)
+        # A failure retains the previous image IDs and all volumes. Never roll
+        # back a database or silently start a different merchant binary.
+        compose('up', '-d')
+    wait_ready()
+    journal.unlink()
+    print('[OK] Docker runtime updated and merchant readiness verified. Merchant version/data were retained.')
 
 
 def require_safe_recreate(state):
@@ -335,13 +456,18 @@ def install(resume=False):
             return
         if state and state.get('busy'):
             raise Error('An application worker is still running. Wait for it; no container was restarted.')
-        require_safe_recreate(state)
         check_capacity()
     label_container_inputs()
     print('\n[1/3] Build the runtime image (no merchant source or credentials in the image).', flush=True)
     compose('build', '--pull')
     print('\n[2/3] Start the private database and merchant containers.', flush=True)
-    compose('up', '-d', '--force-recreate', 'merchant') if resume else compose('up', '-d')
+    if resume:
+        values = containers()
+        with maintenance(values.get('merchant')):
+            require_safe_recreate(progress())
+            compose('up', '-d', '--force-recreate', 'merchant')
+    else:
+        compose('up', '-d')
     print('\n[3/3] Follow setup progress. Ctrl+C closes this view; installation continues.', flush=True)
     wait_ready()
 
@@ -354,14 +480,12 @@ def backup():
     if len(ids) != 2:
         raise Error('Both configured service containers must exist before taking a full backup.')
     details = json.loads(run(['docker', 'inspect', *ids], capture=True))
-    mounts, running, image = {}, [], None
+    mounts, image = {}, None
     mapping = {'/root/whollycrypto': 'merchant', '/etc/nginx': 'nginx', '/etc/letsencrypt': 'certificates', '/var/lib/postgresql': 'database'}
     for container in details:
         service = container['Config']['Labels']['com.docker.compose.service']
         if service not in ('merchant', 'database'):
             raise Error('Unexpected service in this Compose project.')
-        if container['State']['Running']:
-            running.append(service)
         if service == 'merchant':
             image = container['Image']
         for mount in container['Mounts']:
@@ -371,22 +495,11 @@ def backup():
     if set(mounts) != set(mapping.values()) or not image:
         raise Error('The four required durable volumes were not found. No data was changed.')
     print('Creating a private full backup. Checkout briefly pauses while both services are stopped.', flush=True)
-    merchant_stopped = False
+    stopped = {}
     try:
-        if 'merchant' in running:
-            compose('exec', '-T', 'merchant', 'systemctl', 'stop', *TIMERS)
-            deadline = time.monotonic() + 180
-            workers = [timer.replace('.timer', '.service') for timer in TIMERS] + ['whollycrypto-console-update.service']
-            while True:
-                states = compose('exec', '-T', 'merchant', 'systemctl', 'show', *workers, '--property=ActiveState', '--value', capture=True).split()
-                if not any(state in ('active', 'activating', 'deactivating', 'reloading') for state in states):
-                    break
-                if time.monotonic() >= deadline:
-                    raise Error('A worker is still running. No services were stopped; retry after it finishes.')
-                time.sleep(2)
-        compose('stop', 'merchant')
-        merchant_stopped = True
-        compose('stop', 'database')
+        values = {item['Config']['Labels']['com.docker.compose.service']: item for item in details}
+        with maintenance(values.get('merchant')):
+            stopped = stop_existing(values)
         payload = directory / 'data.tar.gz'
         command = ['docker', 'run', '--rm', '--network=none', '--read-only', '--entrypoint=tar']
         for target, name in sorted(mounts.items()):
@@ -421,26 +534,22 @@ def backup():
         print('Verified backup: ' + str(directory))
         print('Contains unencrypted private keys and database credentials. Copy the WHOLE directory to secure offline storage.')
     finally:
-        if 'database' in running:
-            compose('up', '-d', 'database')
-        if 'merchant' in running:
-            compose('up', '-d', 'merchant')
-            # A pre-stop failure may have left the existing merchant running.
-            if not merchant_stopped:
-                compose('exec', '-T', 'merchant', 'systemctl', 'enable', '--now', *TIMERS)
+        start_existing(stopped)
+        if 'merchant' in stopped:
+            wait_ready()
 
 
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['setup', 'resume', 'status', 'logs', 'update', 'backup', 'doctor', 'cli', 'stop', 'start'])
+    parser.add_argument('command', choices=['setup', 'resume', 'status', 'logs', 'update', 'runtime-update', 'backup', 'doctor', 'cli', 'stop', 'start'])
     parser.add_argument('arguments', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     prerequisites()
     # Serialize mutating host operations; the merchant also keeps its own locks.
     descriptor = os.open(ROOT / '.operation.lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, 'a') as lock:
-        if args.command in ('setup', 'resume', 'update', 'backup', 'stop', 'start'):
+        if args.command in ('setup', 'resume', 'update', 'runtime-update', 'backup', 'stop', 'start'):
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         if args.command in ('setup', 'resume'):
             install(args.command == 'resume')
@@ -450,13 +559,21 @@ def main():
             compose('logs', '--follow', '--tail=80', 'merchant')
         elif args.command == 'backup':
             backup()
+        elif args.command == 'runtime-update':
+            runtime_update()
         elif args.command in ('start', 'stop'):
             if args.command == 'start':
                 validate_inputs()
                 label_container_inputs()
-                compose('up', '-d')
+                values = containers()
+                if set(values) != {'merchant', 'database'}:
+                    raise Error('Both containers must already exist. Use setup, resume, or the restore procedure; start never recreates containers.')
+                start_existing(values)
+                wait_ready()
             else:
-                compose('stop')
+                values = containers()
+                with maintenance(values.get('merchant')):
+                    stop_existing(values)
         else:
             command = args.arguments if args.command == 'cli' else [args.command, *args.arguments]
             if not command:

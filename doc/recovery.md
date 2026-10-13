@@ -15,7 +15,7 @@ docker run --rm --network none --entrypoint tar \
   --mount type=volume,src=whollycrypto_nginx,dst=/snapshot/nginx \
   --mount type=volume,src=whollycrypto_certificates,dst=/snapshot/certificates \
   --mount type=bind,src=/absolute/path/to/backup/data.tar.gz,dst=/recovery.tar.gz,readonly \
-  whollycrypto-merchant-runtime:1.1.0 \
+  whollycrypto-merchant-runtime:1.1.1 \
   -C /snapshot -xzf /recovery.tar.gz
 ```
 
@@ -27,5 +27,9 @@ The archive includes database ownership, the original encryption key, account/in
 7. Run `./whollycrypto-docker start` and `./whollycrypto-docker doctor`. The helper also labels its exact container input files on SELinux hosts without disabling enforcement. Verify Basic Auth, admin login, chain connectivity, wallet addresses/balances, invoices and callbacks before resuming business. Certificate/domain changes remain subject to normal validation.
 
 An `update-pending.json` journal stops automatic startup. Preserve it and use `./whollycrypto-docker cli recover`, then `./whollycrypto-docker resume`; never delete the journal to force an uncertain release to start.
+
+Docker 1.1.1 caches the exact signed previous recovery CLI before a merchant update. `cli recover` can use it even when the installed CLI file is missing. Every cache use rechecks its signature and checksum. Older installations without that cache need access to either official release download channel to obtain the exact signed old version. Recovery retains the native confirmation/schema checks and never automatically restores a database after a schema change.
+
+Host full-backup cleanup restarts only the exact containers it actually stopped. A failed drain does not restart, rebuild or replace any container. After changing the integration checkout, use `runtime-update` (not direct `compose up`) to apply container changes; `start` intentionally retains the existing images.
 
 Before performing this on a production backup, rehearse on an isolated machine with outbound networking blocked. Keep that rehearsal offline to avoid duplicate notifications, registration or spending. A backup stored only on the same VPS is not an off-server backup.

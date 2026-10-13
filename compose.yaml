@@ -2,7 +2,8 @@ name: whollycrypto
 
 services:
   database:
-    image: postgres:18.6-bookworm@sha256:1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af
+    build: {context: ., dockerfile: Dockerfile.database}
+    image: whollycrypto-postgres-runtime:1.1.1
     platform: linux/amd64
     restart: unless-stopped
     pids_limit: 256
@@ -17,10 +18,8 @@ services:
     volumes:
       - database:/var/lib/postgresql
       - database_socket:/var/run/postgresql
-      - ./runtime/db-entrypoint.sh:/opt/whollycrypto-db-entrypoint.sh:ro
-      - ./runtime/db-init.sh:/docker-entrypoint-initdb.d/10-whollycrypto.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h /var/run/postgresql -U postgres -d postgres"]
+      test: ["CMD", "/bin/bash", "/opt/whollycrypto-db-health.sh"]
       interval: 5s
       timeout: 3s
       retries: 30
@@ -31,7 +30,7 @@ services:
 
   merchant:
     build: .
-    image: whollycrypto-merchant-runtime:1.1.0
+    image: whollycrypto-merchant-runtime:1.1.1
     platform: linux/amd64
     init: true
     pids_limit: 512

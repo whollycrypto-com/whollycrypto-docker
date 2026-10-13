@@ -6,5 +6,6 @@
 /.operation.lock
 /.setup-pending.json
 /.setup-write-*
+/.runtime-update.json
 __pycache__/
 *.pyc
